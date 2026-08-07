@@ -1,0 +1,43 @@
+name: Deploy purchase-api
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "supabase/functions/purchase-api/**"
+      - "supabase/config.toml"
+      - ".github/workflows/deploy-purchase-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy purchase-api to Supabase Production
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ymmxajugsmydoqyrvkjv
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy purchase-api
+        run: |
+          supabase functions deploy purchase-api \
+            --project-ref "$SUPABASE_PROJECT_ID" \
+            --use-api
+
+      - name: Deployment completed
+        run: |
+          echo "purchase-api deployment completed successfully."
