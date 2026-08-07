@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - deploy-only
     paths:
       - "supabase/functions/purchase-api/**"
       - "supabase/config.toml"
