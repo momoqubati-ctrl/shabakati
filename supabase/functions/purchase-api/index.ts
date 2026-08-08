@@ -165,10 +165,34 @@ serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
   });
 
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  // ── Auth Connectivity Diagnostic ──────────────────────────────────────────
+  try {
+    console.log("AUTH_CONFIG", { 
+      supabaseUrl: supabaseUrl, 
+      hasServiceRole: !!supabaseServiceKey,
+      hasAnonKey: !!supabaseAnonKey
+    });
+
+    const healthRes = await fetch(`${supabaseUrl}/auth/v1/health`);
+    console.log("AUTH_HEALTH", { status: healthRes.status, ok: healthRes.ok });
+
+    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, { 
+      headers: { 
+        apikey: supabaseAnonKey, 
+        Authorization: `Bearer ${token}` 
+      }, 
+    });
+    console.log("AUTH_USER_HTTP", { status: userRes.status, ok: userRes.ok });
+  } catch (diagErr) {
+    console.error("AUTH_DIAGNOSTIC_FAILED", diagErr);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // ── Auth: Cryptographic JWT Verification via GoTrue ──────────────────────
   // We use adminClient to verify the token to prevent header duplication (which causes 500 errors)
   // and we use the internal supabaseUrl to bypass custom domain / Cloudflare network blocks.
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   const { data: { user }, error: authError } = await adminClient.auth.getUser(token);
 
   if (authError || !user) {
