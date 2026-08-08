@@ -155,8 +155,9 @@ serve(async (req) => {
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-  // Use SUPABASE_AUTH_URL if provided (e.g. for custom domains) to avoid Issuer Mismatches
-  const authUrl = Deno.env.get('SUPABASE_AUTH_URL') ?? supabaseUrl;
+  // Use CUSTOM_AUTH_URL if provided (e.g. for custom domains) to avoid Issuer Mismatches
+  // (Supabase restricts custom secrets from starting with 'SUPABASE_')
+  const authUrl = Deno.env.get('CUSTOM_AUTH_URL') ?? supabaseUrl;
 
   // User-scoped client (respects RLS, user identity comes from JWT)
   const userClient = createClient(authUrl, supabaseAnonKey, {
