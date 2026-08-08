@@ -169,7 +169,12 @@ serve(async (req) => {
 
   if (authError || !user) {
     // Log the actual raw error to Supabase Dashboard Logs for debugging (e.g. Issuer mismatch)
-    console.error('[purchase-api] Authentication failed:', authError?.message || authError || 'Unknown error');
+    console.error("PURCHASE_API_AUTH_ERROR", {
+      message: authError?.message,
+      name: authError?.name,
+      status: authError?.status,
+      code: authError?.code,
+    });
     
     // Return a safe, generic error to the client
     return jsonResponse({
