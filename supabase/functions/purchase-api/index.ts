@@ -167,7 +167,7 @@ serve(async (req) => {
   const token = authHeader.replace('Bearer ', '');
   const { data: { user }, error: authError } = await userClient.auth.getUser(token);
   if (authError || !user) {
-    return errorResponse('Unauthorized: invalid or expired session', 401);
+    return errorResponse(`Unauthorized: ${authError?.message || 'invalid or expired session'}`, 401);
   }
 
   const customerId = user.id;
