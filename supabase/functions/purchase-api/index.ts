@@ -163,14 +163,25 @@ serve(async (req) => {
   // Service client (used for writes that need to bypass RLS atomically)
   const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-  // Verify session
+  // Decode JWT manually. We rely on Kong (API Gateway) to have already verified the signature.
+  // This avoids GoTrue issuer mismatch errors when using custom domains.
   const token = authHeader.replace('Bearer ', '');
-  const { data: { user }, error: authError } = await userClient.auth.getUser(token);
-  if (authError || !user) {
-    return errorResponse(`Unauthorized: ${authError?.message || 'invalid or expired session'}`, 401);
+  let customerId = '';
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    const payload = JSON.parse(jsonPayload);
+    customerId = payload.sub;
+  } catch (err) {
+    return errorResponse(`Unauthorized: Invalid token format`, 401);
   }
 
-  const customerId = user.id;
+  if (!customerId) {
+    return errorResponse('Unauthorized: missing user ID in token', 401);
+  }
 
   // ── Parse Command ─────────────────────────────────────────────────────────
   let payload: Record<string, unknown>;
