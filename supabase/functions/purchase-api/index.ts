@@ -167,24 +167,27 @@ serve(async (req) => {
 
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
-  // ── Auth Connectivity Diagnostic ──────────────────────────────────────────
+  // ── Auth Connectivity Diagnostic (Test A & Test B) ────────────────────────
   try {
-    console.log("AUTH_CONFIG", { 
-      supabaseUrl: supabaseUrl, 
-      hasServiceRole: !!supabaseServiceKey,
-      hasAnonKey: !!supabaseAnonKey
-    });
+    const fetchTest = async (testName: string, url: string) => {
+      try {
+        const res = await fetch(url, {
+          headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${token}` }
+        });
+        const bodyText = await res.text();
+        console.log(testName, { 
+          status: res.status, 
+          ok: res.ok, 
+          contentType: res.headers.get('content-type'),
+          responseBody: bodyText
+        });
+      } catch (err) {
+        console.error(`${testName}_FETCH_FAILED`, err);
+      }
+    };
 
-    const healthRes = await fetch(`${supabaseUrl}/auth/v1/health`);
-    console.log("AUTH_HEALTH", { status: healthRes.status, ok: healthRes.ok });
-
-    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, { 
-      headers: { 
-        apikey: supabaseAnonKey, 
-        Authorization: `Bearer ${token}` 
-      }, 
-    });
-    console.log("AUTH_USER_HTTP", { status: userRes.status, ok: userRes.ok });
+    await fetchTest("AUTH_TEST_PROJECT", `${supabaseUrl}/auth/v1/user`);
+    await fetchTest("AUTH_TEST_CUSTOM", `https://api.alhawia.store/auth/v1/user`);
   } catch (diagErr) {
     console.error("AUTH_DIAGNOSTIC_FAILED", diagErr);
   }
