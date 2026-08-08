@@ -163,25 +163,24 @@ serve(async (req) => {
   // Service client (used for writes that need to bypass RLS atomically)
   const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-  // Decode JWT manually. We rely on Kong (API Gateway) to have already verified the signature.
-  // This avoids GoTrue issuer mismatch errors when using custom domains.
-  const token = authHeader.replace('Bearer ', '');
-  let customerId = '';
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-    const payload = JSON.parse(jsonPayload);
-    customerId = payload.sub;
-  } catch (err) {
-    return errorResponse(`Unauthorized: Invalid token format`, 401);
+  // ── Auth: Cryptographic JWT Verification via GoTrue ──────────────────────
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const { data: { user }, error: authError } = await userClient.auth.getUser(token);
+
+  if (authError || !user) {
+    // Log the actual raw error to Supabase Dashboard Logs for debugging (e.g. Issuer mismatch)
+    console.error('[purchase-api] Authentication failed:', authError?.message || authError || 'Unknown error');
+    
+    // Return a safe, generic error to the client
+    return jsonResponse({
+      success: false,
+      error: 'AUTHENTICATION_FAILED',
+      message: 'Invalid or expired authentication token'
+    }, 401);
   }
 
-  if (!customerId) {
-    return errorResponse('Unauthorized: missing user ID in token', 401);
-  }
+  // The customerId MUST strictly come from the verified user token, never from the request body.
+  const customerId = user.id;
 
   // ── Parse Command ─────────────────────────────────────────────────────────
   let payload: Record<string, unknown>;
