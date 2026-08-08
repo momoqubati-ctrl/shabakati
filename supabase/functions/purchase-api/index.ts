@@ -155,21 +155,21 @@ serve(async (req) => {
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-  // Use CUSTOM_AUTH_URL if provided (e.g. for custom domains) to avoid Issuer Mismatches
-  // (Supabase restricts custom secrets from starting with 'SUPABASE_')
-  const authUrl = Deno.env.get('CUSTOM_AUTH_URL') ?? supabaseUrl;
-
-  // User-scoped client (respects RLS, user identity comes from JWT)
-  const userClient = createClient(authUrl, supabaseAnonKey, {
+  // User-scoped client (respects RLS)
+  const userClient = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: authHeader } },
   });
 
-  // Service client (used for writes that need to bypass RLS atomically)
-  const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+  // Service client (used for writes that need to bypass RLS atomically, and for verifying auth)
+  const adminClient = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
 
   // ── Auth: Cryptographic JWT Verification via GoTrue ──────────────────────
+  // We use adminClient to verify the token to prevent header duplication (which causes 500 errors)
+  // and we use the internal supabaseUrl to bypass custom domain / Cloudflare network blocks.
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-  const { data: { user }, error: authError } = await userClient.auth.getUser(token);
+  const { data: { user }, error: authError } = await adminClient.auth.getUser(token);
 
   if (authError || !user) {
     // Log the actual raw error to Supabase Dashboard Logs for debugging (e.g. Issuer mismatch)
