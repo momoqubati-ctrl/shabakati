@@ -164,7 +164,8 @@ serve(async (req) => {
   const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
   // Verify session
-  const { data: { user }, error: authError } = await userClient.auth.getUser();
+  const token = authHeader.replace('Bearer ', '');
+  const { data: { user }, error: authError } = await userClient.auth.getUser(token);
   if (authError || !user) {
     return errorResponse('Unauthorized: invalid or expired session', 401);
   }
