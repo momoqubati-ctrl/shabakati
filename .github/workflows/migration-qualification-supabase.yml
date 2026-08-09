@@ -1,0 +1,134 @@
+name: Migration Qualification — resume_basgate_purchase_saga (Supabase-local)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Verify Supabase CLI & config
+        run: |
+          set -euo pipefail
+          supabase --version || (echo "Supabase CLI not available" && exit 1)
+          if [ ! -f supabase/config.toml ]; then
+            echo "Missing supabase/config.toml in repo root" && exit 1
+          fi
+
+      - name: Start Supabase Local Stack
+        # This step launches the Supabase local stack (Docker-based) on the runner.
+        # Run from the `supabase/` directory so the CLI picks up the local config.
+        working-directory: supabase
+        run: |
+          set -euo pipefail
+          supabase start --project-ref shabakati &> ../supabase_start.log &
+          echo "Waiting for Postgres on 54322..."
+          for i in {1..60}; do
+            pg_isready -h localhost -p 54322 -U postgres && break || sleep 2
+          done
+          echo "supabase_start log:"; tail -n +1 ../supabase_start.log
+
+      - name: Export DB connection (assumes Supabase local default)
+        run: |
+          echo "PGHOST=localhost" >> $GITHUB_ENV
+          echo "PGPORT=54322" >> $GITHUB_ENV
+          echo "PGUSER=postgres" >> $GITHUB_ENV
+          echo "PGPASSWORD=postgres" >> $GITHUB_ENV
+          echo "PGDATABASE=postgres" >> $GITHUB_ENV
+
+      - name: Create supabase extensions (uuid-ossp, pgcrypto)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"; CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+      - name: Apply baseline migrations (exclude proposal)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          mkdir -p migration_logs
+          PROPOSAL=20260810000002_enforce_strict_currency_isolation_resume_basgate_purchase_saga.sql
+          REQUIRED=20260807000071_basgate_saga_rpcs.sql
+          if [ ! -f supabase/migrations/$REQUIRED ]; then
+            echo "Required migration $REQUIRED missing" && exit 1
+          fi
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            b=$(basename "$f")
+            if [ "$b" = "$PROPOSAL" ]; then
+              echo "Skipping proposal migration $b during baseline" | tee migration_logs/$b.log
+              continue
+            fi
+            echo "--- applying $f" | tee migration_logs/$(basename $f).log
+            psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f" 2>&1 | tee -a migration_logs/$(basename $f).log
+          done
+          # Quick verification that REQUIRED migration was applied (log contains file header)
+          grep -q "--- applying .*${REQUIRED}" migration_logs/${REQUIRED}.log || echo "Warning: could not verify application of $REQUIRED in logs"
+
+      - name: Apply proposal migration (qualification only)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          PROPOSAL=20260810000002_enforce_strict_currency_isolation_resume_basgate_purchase_saga.sql
+          if [ ! -f supabase/migrations/$PROPOSAL ]; then
+            echo "Proposal migration $PROPOSAL not found" && exit 1
+          fi
+          psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/$PROPOSAL 2>&1 | tee proposal_migration.log
+
+      - name: RPC Structural Comparison
+        run: |
+          set -euo pipefail
+          python scripts/compare_resume_rpc.py > resume_rpc_compare.txt 2>&1 || (cat resume_rpc_compare.txt && exit 1)
+
+      - name: Run Qualification SQL tests (A..L)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/qualification_resume_tests.sql 2>&1 | tee qualification_tests.log
+
+      - name: Atomicity snapshots and verification (collect state)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM public.orders;" > atomic_snapshot_orders.txt
+          psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM public.cards WHERE status IN ('RESERVED','SOLD');" > atomic_snapshot_cards.txt
+          psql -h localhost -p 54322 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM public.order_events;" > atomic_snapshot_events.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-basgate-qualification-report
+          path: |
+            supabase_start.log
+            migration_logs/**
+            proposal_migration.log
+            resume_rpc_compare.txt
+            qualification_tests.log
+            atomic_snapshot_orders.txt
+            atomic_snapshot_cards.txt
+            atomic_snapshot_events.txt
+
+      - name: Stop Supabase Local Stack
+        if: always()
+        run: |
+          set -euo pipefail
+          supabase stop || true
