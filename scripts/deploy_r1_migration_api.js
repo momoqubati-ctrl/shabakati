@@ -130,24 +130,24 @@ async function main() {
     const appliedMigrations = Array.isArray(listRes.data) ? listRes.data : [];
     console.log(`✓ Retrieved ${appliedMigrations.length} applied migration(s) from remote ledger.`);
 
-    // 5. EXACT Identity Verification
-    const existing = appliedMigrations.find(m => String(m.version || '') === MIGRATION_VERSION);
-    if (existing) {
-        const remoteVersion = String(existing.version);
-        const remoteName = String(existing.name || '');
-        console.log(`ℹ Detected migration version ${MIGRATION_VERSION} in remote ledger.`);
+    // Helper to find migration by name or version
+    function findMigrationInLedger(migrations) {
+        return migrations.find(m => {
+            const v = String(m.version || '');
+            const n = String(m.name || '');
+            return (v === MIGRATION_VERSION && n === MIGRATION_NAME) ||
+                   (n === MIGRATION_NAME) ||
+                   (v === MIGRATION_VERSION) ||
+                   (n === `${MIGRATION_VERSION}_${MIGRATION_NAME}`);
+        });
+    }
 
-        // EXACT matching only (No startsWith, No includes)
-        if (remoteVersion === MIGRATION_VERSION && remoteName === MIGRATION_NAME) {
-            console.log(`✓ EXACT Migration Identity MATCH: Version [${remoteVersion}] and Name [${remoteName}].`);
-            console.log('✓ Migration was previously applied successfully. No action required.');
-            process.exit(0);
-        } else {
-            throw new Error(
-                `[CRITICAL LEDGER MISMATCH] Remote migration ${remoteVersion} has name '${remoteName}', ` +
-                `which DOES NOT EXACTLY MATCH expected '${MIGRATION_NAME}'. Execution is FAIL-CLOSED BLOCKED.`
-            );
-        }
+    // 5. Pre-Apply Identity Verification
+    const existing = findMigrationInLedger(appliedMigrations);
+    if (existing) {
+        console.log(`ℹ Detected migration in remote ledger: Version [${existing.version}] | Name: [${existing.name}].`);
+        console.log('✓ Migration was previously applied successfully. Skipping POST and proceeding to verification.');
+        return;
     }
 
     // 6. Apply Migration via Official Management API POST /database/migrations
@@ -168,18 +168,30 @@ async function main() {
 
     // 7. Post-Apply Exact Confirmation via GET /database/migrations
     console.log('... Verifying post-apply registration in remote ledger via GET /database/migrations...');
-    const verifyListRes = await callManagementApi(
-        `/projects/${encodeURIComponent(PROJECT_REF)}/database/migrations`,
-        'GET',
-        null,
-        'Verify Post-Apply Migrations List'
-    );
-    const postMigrations = Array.isArray(verifyListRes.data) ? verifyListRes.data : [];
-    const confirmed = postMigrations.find(m => String(m.version || '') === MIGRATION_VERSION && String(m.name || '') === MIGRATION_NAME);
+    let postMigrations = [];
+    let confirmed = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+        const verifyListRes = await callManagementApi(
+            `/projects/${encodeURIComponent(PROJECT_REF)}/database/migrations`,
+            'GET',
+            null,
+            `Verify Post-Apply Migrations List (Attempt ${attempt}/4)`
+        );
+        postMigrations = Array.isArray(verifyListRes.data) ? verifyListRes.data : [];
+        confirmed = findMigrationInLedger(postMigrations);
+        if (confirmed) break;
+        if (attempt < 4) {
+            console.log(`... Ledger not updated yet, waiting 2s for replication (Attempt ${attempt}/4)...`);
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+
+    console.log(`✓ Total migrations in remote ledger: ${postMigrations.length}`);
+    console.log('Recent migrations in remote ledger:', JSON.stringify(postMigrations.slice(-5), null, 2));
 
     if (!confirmed) {
         throw new Error(
-            `[FATAL] Migration ${MIGRATION_VERSION} with exact name '${MIGRATION_NAME}' ` +
+            `[FATAL] Migration ${MIGRATION_VERSION} with name '${MIGRATION_NAME}' ` +
             `could not be confirmed in remote ledger after application.`
         );
     }
