@@ -508,7 +508,10 @@ async function runStage2DeepContractVerification() {
     for (const check of contractChecks) {
         try {
             const res = await executeReadOnlySql(check.query, check.name);
-            const detail = check.validate(Array.isArray(res.data) ? res.data : []);
+            const rows = Array.isArray(res.data) 
+                ? res.data 
+                : (Array.isArray(res.data?.result) ? res.data.result : (Array.isArray(res.data?.rows) ? res.data.rows : []));
+            const detail = check.validate(rows);
             console.log(`✓ [PASS] ${check.name} -> ${detail}`);
             auditReport.stages.stage_2_deep_contract_verification.checks.push({
                 name: check.name,
