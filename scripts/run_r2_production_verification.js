@@ -33,7 +33,7 @@ const MIGRATION_FILE_NAME = `${MIGRATION_VERSION}_${MIGRATION_NAME}.sql`;
 const MIGRATION_PATH = path.join(ROOT_DIR, 'supabase', 'migrations', MIGRATION_FILE_NAME);
 const REPORT_PATH = path.join(ROOT_DIR, 'r2_production_audit_report.json');
 
-const PRODUCTION_DATA_API_URL = process.env.SUPABASE_URL || 'https://api.alhawia.store';
+const PRODUCTION_DATA_API_URL = process.env.SUPABASE_URL || `https://${PROJECT_REF}.supabase.co`;
 const PRODUCTION_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const MANAGEMENT_API_BASE = 'https://api.supabase.com/v1';
@@ -93,7 +93,8 @@ async function callPostgrest(pathWithQuery, options = {}) {
             status: 0,
             durationMs: 0,
             data: { error: 'SUPABASE_ANON_KEY missing in environment' },
-            skipped: true
+            skipped: true,
+            isBlockedByEdge: false
         };
     }
     const url = `${PRODUCTION_DATA_API_URL}/rest/v1${pathWithQuery}`;
@@ -121,11 +122,18 @@ async function callPostgrest(pathWithQuery, options = {}) {
         data = rawText;
     }
 
+    const contentType = response.headers.get('content-type') || '';
+    const isCloudflareChallenge = response.status === 403 && (
+        (typeof data === 'string' && (data.includes('Just a moment') || data.includes('challenge-platform') || data.includes('Cloudflare'))) ||
+        contentType.includes('text/html')
+    );
+
     return {
         status: response.status,
         durationMs,
         data,
-        headers: response.headers
+        headers: response.headers,
+        isBlockedByEdge: isCloudflareChallenge
     };
 }
 
@@ -155,7 +163,7 @@ async function main() {
 
     function recordCheck(code, description, status, details = {}) {
         report.checks.push({ code, description, status, details });
-        const icon = status === 'PASS' ? '✓' : '❌';
+        const icon = status === 'PASS' ? '✓' : (status === 'BLOCKED' ? '⚠️' : '❌');
         console.log(` ${icon} [${code}] ${description}: ${status}`);
         if (status !== 'PASS') {
             console.error('    Details:', JSON.stringify(details, null, 2));
@@ -228,7 +236,12 @@ async function main() {
     
     // 3.1: wholesale_catalog_products
     const catRes = await callPostgrest('/wholesale_catalog_products?select=id,network_id,network_package_id,currency,status&limit=5');
-    if (catRes.status === 200 && Array.isArray(catRes.data) && catRes.data.length === 0) {
+    if (catRes.isBlockedByEdge) {
+        recordCheck('R2-TABLE-01', 'wholesale_catalog_products table live & 0 rows for anon', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (catRes.status === 200 && Array.isArray(catRes.data) && catRes.data.length === 0) {
         recordCheck('R2-TABLE-01', 'wholesale_catalog_products table live & 0 rows for anon', 'PASS', {
             http_status: catRes.status,
             rows_returned: catRes.data.length
@@ -242,7 +255,12 @@ async function main() {
 
     // 3.2: wholesale_merchant_offers
     const offRes = await callPostgrest('/wholesale_merchant_offers?select=id,merchant_id,catalog_product_id,min_order_quantity,step_quantity,cost_floor_price,currency,status&limit=5');
-    if (offRes.status === 200 && Array.isArray(offRes.data) && offRes.data.length === 0) {
+    if (offRes.isBlockedByEdge) {
+        recordCheck('R2-TABLE-02', 'wholesale_merchant_offers table live & 0 rows for anon', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (offRes.status === 200 && Array.isArray(offRes.data) && offRes.data.length === 0) {
         recordCheck('R2-TABLE-02', 'wholesale_merchant_offers table live & 0 rows for anon', 'PASS', {
             http_status: offRes.status,
             rows_returned: offRes.data.length
@@ -256,7 +274,12 @@ async function main() {
 
     // 3.3: wholesale_offer_tiers
     const tierRes = await callPostgrest('/wholesale_offer_tiers?select=id,offer_id,min_quantity,max_quantity,unit_price,currency&limit=5');
-    if (tierRes.status === 200 && Array.isArray(tierRes.data) && tierRes.data.length === 0) {
+    if (tierRes.isBlockedByEdge) {
+        recordCheck('R2-TABLE-03', 'wholesale_offer_tiers table live & 0 rows for anon', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (tierRes.status === 200 && Array.isArray(tierRes.data) && tierRes.data.length === 0) {
         recordCheck('R2-TABLE-03', 'wholesale_offer_tiers table live & 0 rows for anon', 'PASS', {
             http_status: tierRes.status,
             rows_returned: tierRes.data.length
@@ -273,7 +296,12 @@ async function main() {
     // -------------------------------------------------------------------------
     console.log('\n--- 4. Amendment 1 Verification: Zero Price Copy to Catalog ---');
     const negPriceRes = await callPostgrest('/wholesale_catalog_products?select=base_retail_price&limit=1');
-    if (negPriceRes.status === 400 && negPriceRes.data && negPriceRes.data.code === '42703') {
+    if (negPriceRes.isBlockedByEdge) {
+        recordCheck('R2-AMEND-01', 'base_retail_price strictly excluded from wholesale_catalog_products', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (negPriceRes.status === 400 && negPriceRes.data && (negPriceRes.data.code === '42703' || JSON.stringify(negPriceRes.data).includes('42703'))) {
         recordCheck('R2-AMEND-01', 'base_retail_price strictly excluded from wholesale_catalog_products', 'PASS', {
             http_status: negPriceRes.status,
             error_code: negPriceRes.data.code,
@@ -291,7 +319,12 @@ async function main() {
     // -------------------------------------------------------------------------
     console.log('\n--- 5. Amendment 2 Verification: Strict Cost Floor Column ---');
     const costFloorRes = await callPostgrest('/wholesale_merchant_offers?select=cost_floor_price&limit=1');
-    if (costFloorRes.status === 200) {
+    if (costFloorRes.isBlockedByEdge) {
+        recordCheck('R2-AMEND-02', 'cost_floor_price confirmed present on wholesale_merchant_offers', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (costFloorRes.status === 200) {
         recordCheck('R2-AMEND-02', 'cost_floor_price confirmed present on wholesale_merchant_offers', 'PASS', {
             http_status: costFloorRes.status
         });
@@ -315,8 +348,12 @@ async function main() {
         }
     });
 
-    // Anonymous caller MUST be rejected with UNAUTHENTICATED
-    if (rpcRes.status >= 400 && (JSON.stringify(rpcRes.data).includes('UNAUTHENTICATED') || rpcRes.status === 401 || rpcRes.status === 403)) {
+    if (rpcRes.isBlockedByEdge) {
+        recordCheck('R2-RPC-01', 'calculate_wholesale_quote live & rejects unauthenticated requests', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (rpcRes.status >= 400 && (JSON.stringify(rpcRes.data).includes('UNAUTHENTICATED') || rpcRes.status === 401 || rpcRes.status === 403)) {
         recordCheck('R2-RPC-01', 'calculate_wholesale_quote live & rejects unauthenticated requests', 'PASS', {
             http_status: rpcRes.status,
             rejection_message: rpcRes.data.message || rpcRes.data
@@ -333,7 +370,12 @@ async function main() {
     // -------------------------------------------------------------------------
     console.log('\n--- 7. Official Retail Price Source Dependency Verification ---');
     const npRes = await callPostgrest('/network_packages?select=id,name,price,status,network_id&limit=5');
-    if (npRes.status === 200 && Array.isArray(npRes.data)) {
+    if (npRes.isBlockedByEdge) {
+        recordCheck('R2-DEP-01', 'network_packages.price source contract verified live on production', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else if (npRes.status === 200 && Array.isArray(npRes.data)) {
         recordCheck('R2-DEP-01', 'network_packages.price source contract verified live on production', 'PASS', {
             http_status: npRes.status,
             rows_visible: npRes.data.length,
@@ -356,12 +398,19 @@ async function main() {
         body: { p_user_id: '00000000-0000-0000-0000-000000000001' }
     });
 
-    const isR1Intact = (r1RetRes.status === 200) && (r1RpcRes.status === 200);
-    recordCheck('R2-DEP-02', 'R1 Identity & Governance contracts remain live and unmutated', isR1Intact ? 'PASS' : 'FAIL', {
-        retailers_http: r1RetRes.status,
-        is_wholesale_merchant_http: r1RpcRes.status,
-        is_wholesale_merchant_result: r1RpcRes.data
-    });
+    if (r1RetRes.isBlockedByEdge || r1RpcRes.isBlockedByEdge) {
+        recordCheck('R2-DEP-02', 'R1 Identity & Governance contracts remain live and unmutated', 'BLOCKED', {
+            http_status: 403,
+            reason: 'Verification transport blocked by Cloudflare Edge Security / Managed Challenge'
+        });
+    } else {
+        const isR1Intact = (r1RetRes.status === 200) && (r1RpcRes.status === 200);
+        recordCheck('R2-DEP-02', 'R1 Identity & Governance contracts remain live and unmutated', isR1Intact ? 'PASS' : 'FAIL', {
+            retailers_http: r1RetRes.status,
+            is_wholesale_merchant_http: r1RpcRes.status,
+            is_wholesale_merchant_result: r1RpcRes.data
+        });
+    }
 
     // -------------------------------------------------------------------------
     // AUDIT REPORT PERSISTENCE
@@ -369,33 +418,48 @@ async function main() {
     const passCount = report.checks.filter(c => c.status === 'PASS').length;
     const failCount = report.checks.filter(c => c.status === 'FAIL').length;
     const skippedCount = report.checks.filter(c => c.status === 'SKIPPED').length;
-    const isFullAcceptance = (report.checks.length === 10) && (passCount === 10) && (failCount === 0) && (skippedCount === 0);
+    const blockedCount = report.checks.filter(c => c.status === 'BLOCKED').length;
+    const isFullAcceptance = (report.checks.length === 10) && (passCount === 10) && (failCount === 0) && (skippedCount === 0) && (blockedCount === 0);
+
+    let overallStatus = 'ACCEPTANCE_PASS';
+    if (!isFullAcceptance) {
+        if (blockedCount > 0) {
+            overallStatus = 'ACCEPTANCE_BLOCKED';
+        } else if (failCount > 0) {
+            overallStatus = 'ACCEPTANCE_FAIL';
+        } else {
+            overallStatus = 'ACCEPTANCE_PENDING';
+        }
+    }
 
     report.summary = {
         total_checks: report.checks.length,
         passed: passCount,
         failed: failCount,
         skipped: skippedCount,
+        blocked: blockedCount,
         not_run: 0,
-        overall_status: isFullAcceptance ? 'ACCEPTANCE_PASS' : (failCount > 0 ? 'ACCEPTANCE_FAIL' : 'ACCEPTANCE_PENDING')
+        overall_status: overallStatus
     };
 
     fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2), 'utf-8');
     console.log(`\n✓ Audit report saved to: ${REPORT_PATH}`);
 
     if (!isFullAcceptance) {
+        if (blockedCount > 0) {
+            console.error(`\n⚠️ [AUDIT BLOCKED]: ${blockedCount} checks were BLOCKED by Cloudflare Edge Security / Managed Challenge.`);
+        }
         if (failCount > 0) {
             console.error(`\n❌ [AUDIT FAILED]: ${failCount} of ${report.checks.length} checks failed.`);
-        } else if (skippedCount > 0) {
-            console.error(`\n⚠️ [AUDIT INCOMPLETE]: ${skippedCount} check(s) were SKIPPED. Full 10/10 PASS required for ACCEPTANCE_PASS.`);
-        } else {
-            console.error(`\n⚠️ [AUDIT INCOMPLETE]: Expected 10 checks with 10 PASS, got ${passCount} passed out of ${report.checks.length}.`);
+        }
+        if (skippedCount > 0) {
+            console.error(`\n⚠️ [AUDIT INCOMPLETE]: ${skippedCount} check(s) were SKIPPED.`);
         }
         process.exit(1);
     }
 
     console.log('\n======================================================================');
-    console.log(` [AUDIT COMPLETE] ALL 10/10 PRODUCTION CHECKS PASSED (0 FAILURES, 0 SKIPPED)`);
+    console.log(` [AUDIT COMPLETE] ALL 10/10 PRODUCTION CHECKS PASSED (0 FAILURES, 0 SKIPPED, 0 BLOCKED)`);
     console.log('======================================================================');
 }
 
