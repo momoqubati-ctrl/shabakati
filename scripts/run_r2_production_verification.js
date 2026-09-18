@@ -421,14 +421,14 @@ async function main() {
     const blockedCount = report.checks.filter(c => c.status === 'BLOCKED').length;
     const isFullAcceptance = (report.checks.length === 10) && (passCount === 10) && (failCount === 0) && (skippedCount === 0) && (blockedCount === 0);
 
-    let overallStatus = 'ACCEPTANCE_PASS';
+    let overallStatus = 'ACCEPTED';
     if (!isFullAcceptance) {
         if (blockedCount > 0) {
-            overallStatus = 'ACCEPTANCE_BLOCKED';
+            overallStatus = 'BLOCKED';
         } else if (failCount > 0) {
-            overallStatus = 'ACCEPTANCE_FAIL';
+            overallStatus = 'FAILED';
         } else {
-            overallStatus = 'ACCEPTANCE_PENDING';
+            overallStatus = 'PENDING';
         }
     }
 
