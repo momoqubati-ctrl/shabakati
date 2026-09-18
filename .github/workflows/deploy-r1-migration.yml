@@ -7,10 +7,6 @@ on:
         description: 'Type "DEPLOY-R1-PRODUCTION" to confirm execution'
         required: true
         default: ''
-      access_token:
-        description: '(Optional) Override Supabase Access Token if repo secret is expired'
-        required: false
-        default: ''
 
 permissions:
   contents: read
@@ -58,14 +54,14 @@ jobs:
 
       - name: Execute Migration via Official Supabase Management API
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ github.event.inputs.access_token != '' && github.event.inputs.access_token || secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'ymmxajugsmydoqyrvkjv' }}
         run: |
           node scripts/deploy_r1_migration_api.js
 
       - name: Run Production Read-Only Deep Contract Verification
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ github.event.inputs.access_token != '' && github.event.inputs.access_token || secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'ymmxajugsmydoqyrvkjv' }}
         run: |
           node scripts/run_r1_production_verification.js

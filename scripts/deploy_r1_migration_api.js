@@ -101,18 +101,17 @@ async function main() {
         throw new Error(`[FATAL] Migration file not found: ${MIGRATION_PATH}`);
     }
     const fileBuffer = fs.readFileSync(MIGRATION_PATH);
-    const normalizedBuffer = Buffer.from(fileBuffer.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
-    const sha256 = crypto.createHash('sha256').update(normalizedBuffer).digest('hex');
+    const rawSha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
     console.log(`✓ Migration File: ${MIGRATION_FILE_NAME} (${fileBuffer.length} bytes)`);
-    console.log(`✓ Computed SHA-256: ${sha256}`);
+    console.log(`✓ Raw-byte SHA-256: ${rawSha256}`);
 
-    const EXPECTED_SHA256 = '34d9e5d3e4da04fc2b58da34bec79a18d6e3872b81a1237a32993743b26f4510';
-    if (sha256 !== EXPECTED_SHA256) {
+    const EXPECTED_RAW_SHA256 = '34d9e5d3e4da04fc2b58da34bec79a18d6e3872b81a1237a32993743b26f4510';
+    if (rawSha256 !== EXPECTED_RAW_SHA256) {
         throw new Error(
-            `[HASH INTEGRITY FAILURE] Migration file hash '${sha256}' does NOT match frozen RC-1 hash '${EXPECTED_SHA256}'. Execution is FAIL-CLOSED BLOCKED.`
+            `[RAW HASH INTEGRITY FAILURE] Migration file raw-byte hash '${rawSha256}' does NOT match frozen RC-1 hash '${EXPECTED_RAW_SHA256}'. Execution is FAIL-CLOSED BLOCKED.`
         );
     }
-    console.log(`✓ RC-1 Cryptographic Freeze Verified: EXACT MATCH (${EXPECTED_SHA256})`);
+    console.log(`✓ RC-1 Cryptographic Freeze Verified (Raw Bytes): EXACT MATCH (${EXPECTED_RAW_SHA256})`);
 
     // 3. Preflight Project Identity with Supabase Management API
     console.log('... Verifying Project Identity with Management API...');
