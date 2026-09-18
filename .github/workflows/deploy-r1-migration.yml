@@ -1,0 +1,78 @@
+name: Program R1 — Deploy Retailer Identity Migration to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: 'Type "DEPLOY-R1-PRODUCTION" to confirm execution'
+        required: true
+        default: ''
+      access_token:
+        description: '(Optional) Override Supabase Access Token if repo secret is expired'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_r1_migration:
+    name: Deploy R1 Migration via Supabase Management API
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate Production Deployment Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_production }}" != "DEPLOY-R1-PRODUCTION" ]; then
+            echo "❌ Deployment aborted: Confirmation token does not match 'DEPLOY-R1-PRODUCTION'."
+            exit 1
+          fi
+          echo "✓ Production deployment confirmation token verified."
+
+      - name: Verify Migration File Integrity
+        id: file_hash
+        run: |
+          MIG_FILE="supabase/migrations/20260919000001_program_r1_retailer_identity.sql"
+          if [ ! -f "$MIG_FILE" ]; then
+            echo "❌ Migration file not found: $MIG_FILE"
+            exit 1
+          fi
+          EXPECTED_SHA="34d9e5d3e4da04fc2b58da34bec79a18d6e3872b81a1237a32993743b26f4510"
+          ACTUAL_SHA=$(sha256sum "$MIG_FILE" | awk '{print $1}')
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "❌ SHA-256 mismatch! Expected $EXPECTED_SHA but got $ACTUAL_SHA"
+            exit 1
+          fi
+          echo "migration_sha=$ACTUAL_SHA" >> $GITHUB_OUTPUT
+          echo "✓ Migration File: $MIG_FILE"
+          echo "✓ Cryptographic SHA-256 Freeze Verified: $ACTUAL_SHA"
+
+      - name: Execute Migration via Official Supabase Management API
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ github.event.inputs.access_token != '' && github.event.inputs.access_token || secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'ymmxajugsmydoqyrvkjv' }}
+        run: |
+          node scripts/deploy_r1_migration_api.js
+
+      - name: Run Production Read-Only Deep Contract Verification
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ github.event.inputs.access_token != '' && github.event.inputs.access_token || secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'ymmxajugsmydoqyrvkjv' }}
+        run: |
+          node scripts/run_r1_production_verification.js
+
+      - name: Upload Production Audit Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r1-production-audit-report
+          path: r1_production_audit_report.json
