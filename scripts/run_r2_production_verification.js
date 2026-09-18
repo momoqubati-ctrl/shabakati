@@ -34,7 +34,7 @@ const MIGRATION_PATH = path.join(ROOT_DIR, 'supabase', 'migrations', MIGRATION_F
 const REPORT_PATH = path.join(ROOT_DIR, 'r2_production_audit_report.json');
 
 const PRODUCTION_DATA_API_URL = process.env.SUPABASE_URL || 'https://api.alhawia.store';
-const PRODUCTION_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const PRODUCTION_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_dBIW0ICS5NhTyAQgNTjdpw_UFpQEzW1';
 
 const MANAGEMENT_API_BASE = 'https://api.supabase.com/v1';
 
