@@ -34,7 +34,7 @@ const MIGRATION_PATH = path.join(ROOT_DIR, 'supabase', 'migrations', MIGRATION_F
 const REPORT_PATH = path.join(ROOT_DIR, 'r2_production_audit_report.json');
 
 const PRODUCTION_DATA_API_URL = process.env.SUPABASE_URL || 'https://api.alhawia.store';
-const PRODUCTION_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_dBIW0ICS5NhTyAQgNTjdpw_UFpQEzW1';
+const PRODUCTION_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const MANAGEMENT_API_BASE = 'https://api.supabase.com/v1';
 
@@ -137,6 +137,12 @@ async function main() {
     console.log(`✓ Target Data API: ${PRODUCTION_DATA_API_URL}`);
     console.log(`✓ Project Ref: ${PROJECT_REF}`);
 
+    if (!PRODUCTION_ANON_KEY) {
+        console.error('\n❌ [FATAL] SUPABASE_ANON_KEY is missing in environment.');
+        console.error('    Security rule: Must be supplied strictly via GitHub Actions Secret (SUPABASE_ANON_KEY).');
+        process.exit(1);
+    }
+
     const report = {
         timestamp: new Date().toISOString(),
         target_api: PRODUCTION_DATA_API_URL,
@@ -178,7 +184,9 @@ async function main() {
     // CHECK 2: Remote Migration Ledger Confirmation
     // -------------------------------------------------------------------------
     console.log('\n--- 2. Production Migrations Ledger Verification ---');
-    if (ACCESS_TOKEN) {
+    if (!ACCESS_TOKEN) {
+        recordCheck('R2-LEDGER-01', 'Migration present in remote ledger', 'FAIL', { reason: 'No SUPABASE_ACCESS_TOKEN provided in environment' });
+    } else {
         try {
             const ledgerRes = await callManagementApi(
                 `/projects/${PROJECT_REF}/database/migrations`,
@@ -211,8 +219,6 @@ async function main() {
         } catch (err) {
             recordCheck('R2-LEDGER-01', 'Migration present in remote ledger', 'FAIL', { error: err.message });
         }
-    } else {
-        recordCheck('R2-LEDGER-01', 'Management API ledger check', 'SKIPPED', { reason: 'No ACCESS_TOKEN provided' });
     }
 
     // -------------------------------------------------------------------------
@@ -362,23 +368,34 @@ async function main() {
     // -------------------------------------------------------------------------
     const passCount = report.checks.filter(c => c.status === 'PASS').length;
     const failCount = report.checks.filter(c => c.status === 'FAIL').length;
+    const skippedCount = report.checks.filter(c => c.status === 'SKIPPED').length;
+    const isFullAcceptance = (report.checks.length === 10) && (passCount === 10) && (failCount === 0) && (skippedCount === 0);
+
     report.summary = {
         total_checks: report.checks.length,
         passed: passCount,
         failed: failCount,
-        overall_status: failCount === 0 ? 'ACCEPTANCE_PASS' : 'ACCEPTANCE_FAIL'
+        skipped: skippedCount,
+        not_run: 0,
+        overall_status: isFullAcceptance ? 'ACCEPTANCE_PASS' : (failCount > 0 ? 'ACCEPTANCE_FAIL' : 'ACCEPTANCE_PENDING')
     };
 
     fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2), 'utf-8');
     console.log(`\n✓ Audit report saved to: ${REPORT_PATH}`);
 
-    if (failCount > 0) {
-        console.error(`\n❌ [AUDIT FAILED]: ${failCount} checks failed.`);
+    if (!isFullAcceptance) {
+        if (failCount > 0) {
+            console.error(`\n❌ [AUDIT FAILED]: ${failCount} of ${report.checks.length} checks failed.`);
+        } else if (skippedCount > 0) {
+            console.error(`\n⚠️ [AUDIT INCOMPLETE]: ${skippedCount} check(s) were SKIPPED. Full 10/10 PASS required for ACCEPTANCE_PASS.`);
+        } else {
+            console.error(`\n⚠️ [AUDIT INCOMPLETE]: Expected 10 checks with 10 PASS, got ${passCount} passed out of ${report.checks.length}.`);
+        }
         process.exit(1);
     }
 
     console.log('\n======================================================================');
-    console.log(` [AUDIT COMPLETE] ALL ${passCount} PRODUCTION CHECKS PASSED (0 FAILURES)`);
+    console.log(` [AUDIT COMPLETE] ALL 10/10 PRODUCTION CHECKS PASSED (0 FAILURES, 0 SKIPPED)`);
     console.log('======================================================================');
 }
 
